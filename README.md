@@ -14,3 +14,13 @@ $ wrangler generate https://github.com/signalnerve/simple-workers-kv-cache
 2. Update `productionHost` to a known production host that you'd like to proxy and cache traffic from
 3. Customize `expirationTtl` to a number of seconds to cache data for. _Note: this value must be 60 seconds or longer._
 4. (Optionally) Set `DEBUG` to `true` to have error messages returned from the Workers function.
+
+## Testing
+
+Run `wrangler dev` locally, and issue requests to `localhost:8787` -- e.g. `curl localhost:8787/about`.
+
+## Publish
+
+```
+$ wrangler publish
+```
