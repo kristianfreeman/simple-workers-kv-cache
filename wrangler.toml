@@ -1,6 +1,16 @@
 name = "simple-workers-kv-cache"
 type = "javascript"
-account_id = ""
 workers_dev = true
-route = ""
-zone_id = ""
+
+# Replace with your account ID, discovered via `wrangler whoami`
+account_id = "dc56444c4c955a1653106ccf997c1067"
+
+# Replace the id/preview_id with your own kv namespace values,
+# created via `wrangler kv:namespace create SIMPLE_CACHE`
+kv_namespaces = [
+  { binding = "SIMPLE_CACHE", id = "8cb53f08ac934bcc9a6b8b4683aec3cf", preview_id = "8cb53f08ac934bcc9a6b8b4683aec3cf" }
+]
+
+# Enable when ready to deploy to production routes
+# route = ""
+# zone_id = ""
