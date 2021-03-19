@@ -5,6 +5,18 @@ addEventListener('fetch', event => {
 // Set up a base URL where our production traffic lives
 const productionHost = "bytesized.xyz"
 
+// Rewrite production URLs in your response bodies
+// This can effectively re-route external CDN content
+// back through this same Workers function, allowing for more caching
+const urlRewrites = {
+  "myurl.com": "my-simple-cache.signalnerve.workers.dev",
+}
+
+const corsHeaders = {
+  // TODO: This should be locked down to a specific origin in production
+  'Access-Control-Allow-Origin': '*'
+}
+
 // Cache length for assets, in seconds
 const expirationTtl = 60
 
@@ -24,18 +36,13 @@ async function handleRequest(request) {
 
     // Get cached response based on URL from KV
     // e.g. "https://bytesized.xyz/tag/newsletter"
-    const kvCachedResp = await SIMPLE_CACHE.get(url.toString())
+    const kvCachedResp = await SIMPLE_CACHE.getWithMetadata(url.toString())
 
-    if (kvCachedResp) {
-      // Parse cached response from KV
-      const { body, headers, status, statusText } = JSON.parse(kvCachedResp)
+    if (kvCachedResp && kvCachedResp.value) {
+      const { value, metadata } = kvCachedResp
 
       // Construct a new response with the body, headers, and status/statusText from KV
-      const cachedResp = new Response(body, {
-        headers: JSON.parse(headers),
-        status,
-        statusText
-      })
+      const cachedResp = new Response(value, { headers: metadata.headers })
       return cachedResp
     } else {
       // Get response from production
@@ -43,37 +50,49 @@ async function handleRequest(request) {
 
       // Clone the response into a new variable so we can query and modify it
       const cloneResp = resp.clone()
+      let body
 
-      // Set up a new headers object, based on the stringified data from KV,
-      // and add `X-Workers-Simple-Cache` to true, to indicate the data was
-      // cached by this application. Optionally, add other headers here,
-      // before sending back to the client.
-      const headers = Object.assign(Object.fromEntries(cloneResp.headers), {
-        'X-Workers-Simple-Cache': true
-      })
+      if (cloneResp.headers.get('Content-type').includes('text')) {
+        let textBody = await cloneResp.text()
 
-      // Prepare the response data to be persisted in KV
-      const respForCache = {
-        body: await cloneResp.text(),
-        headers: JSON.stringify(headers),
-        status: cloneResp.status,
-        statusText: cloneResp.statusText
+        // If any URL Rewrites are set, iterate through them, and replace
+        // any found hosts with the new host
+        if (Object.keys(urlRewrites).length) {
+          Object.keys(urlRewrites).forEach(key => {
+            const pattern = new RegExp(key, 'gi')
+            const newHost = urlRewrites[key]
+            textBody = textBody.replace(pattern, newHost)
+          })
+        }
+        body = textBody
+      } else {
+        body = cloneResp.body
       }
 
-      // Cache the response in Workers KV, and expire it in a configured number of seconds
+      // Prepare the response data to be persisted in KV
+      // Cache the response in Workers KV, and expire it in a configured number of seconds 
       await SIMPLE_CACHE.put(
         url.toString(),
-        JSON.stringify(respForCache),
-        { expirationTtl }
+        body,
+        {
+          expirationTtl,
+          metadata: {
+            // Store a small amount of headers from the original response as KV metadata
+            // This allows us to store the raw body as the value in KV, and the assets
+            // as part of the KV metadata (which allows images and other non-text content
+            // to exist in KV)
+            // Note that KV metadata has a 1024 byte limit, so you must select a subset of
+            // important response headers to store here
+            headers: {
+              'Content-type': cloneResp.headers.get('Content-Type'),
+              'X-Workers-Simple-Cache': true,
+            }
+          }
+        }
       )
 
-      // Replace with the below line to cache indefinitely. Note that this will require
-      // manual purging of KV keys, either via our UI, wrangler (`wrangler kv:key delete`),
-      // or a cron trigger
-      // await SIMPLE_CACHE.put(url.toString(), JSON.stringify(respForCache))
-
       // Return the response to the client
-      return resp
+      return new Response(textBody, cloneResp)
     }
   } catch (err) {
     if (DEBUG) {
